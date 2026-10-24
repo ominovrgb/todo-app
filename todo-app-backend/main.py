@@ -29,11 +29,11 @@ class TaskUpdateSchema(BaseModel):
 tasks: list[TaskSchema] = []
 
 
-@app.get("/tasks", status_code=status.HTTP_201_CREATED)
+@app.get("/tasks")
 def read_tasks() -> list[TaskSchema]:
     return tasks
 
-@app.post("/tasks")
+@app.post("/tasks", status_code=status.HTTP_201_CREATED)
 def create_task(payload:TaskCreateSchema) -> TaskSchema:
     new_task = TaskSchema(id=str(uuid4()), title = payload.title, completed = False)
     tasks.append(new_task)
@@ -69,11 +69,11 @@ class CategoryUpdateSchema(BaseModel):
     complete: bool | None = None
 
 categories: list[CategorySchema] = []
-@app.get("/categories", status_code=status.HTTP_201_CREATED)
+@app.get("/categories")
 def read_categories() -> list[CategorySchema]:
     return categories
 
-@app.post("/categories")
+@app.post("/categories", status_code=status.HTTP_201_CREATED)
 def create_new_category(payload:CategoryCreateSchema) -> CategorySchema:
     new_category = CategorySchema(id=str(uuid4()), name = payload.name, complete = False)
     categories.append(new_category)
