@@ -24,6 +24,16 @@ function getErrorText(error) {
 }
 
 function App() {
+  const handleToggleCategory = async (category) => {
+  try {
+    await axios.patch(`${API_BASE_URL}/categories/${category.id}`, {
+      complete: !category.complete,
+    });
+    fetchCategories();
+  } catch (error) {
+    console.error('Error updating category:', error);
+  }
+};
   const [activeView, setActiveView] = useState('tasks');
 
   const [taskTitle, setTaskTitle] = useState('');
@@ -374,11 +384,16 @@ function App() {
                 <ul className="category-list">
                   {categories.map((category, index) => (
                     <li key={category.id} style={{ '--item-index': index }}>
-                      <div className="category-mark" aria-hidden="true" />
+                      <button
+  className={category.complete ? 'toggle done' : 'toggle'}
+  onClick={() => handleToggleCategory(category)}
+  type="button"
+>
+  {category.complete ? '✓' : ''}
+</button>
 
                       <div className="task-content">
                         <span className="task-title">{getCategoryName(category)}</span>
-                        <span className="task-state">{category.id}</span>
                       </div>
 
                       <div className="task-actions">
@@ -404,5 +419,6 @@ function App() {
     </div>
   );
 }
+
 
 export default App;

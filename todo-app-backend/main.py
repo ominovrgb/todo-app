@@ -11,6 +11,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
     allow_methods=["*"],
+    allow_headers=["*"]
 )
 
 class TaskSchema(BaseModel):
@@ -55,4 +56,42 @@ def delete_task(task_id):
             tasks.remove(task)
 
 
+class  CategorySchema(BaseModel):
+    id: str
+    name: str
+    complete: bool
 
+class CategoryCreateSchema(BaseModel):
+    name: str
+
+class CategoryUpdateSchema(BaseModel):
+    name: str | None = None
+    complete: bool | None = None
+
+categories: list[CategorySchema] = []
+@app.get("/categories", status_code=status.HTTP_201_CREATED)
+def read_categories() -> list[CategorySchema]:
+    return categories
+
+@app.post("/categories")
+def create_new_category(payload:CategoryCreateSchema) -> CategorySchema:
+    new_category = CategorySchema(id=str(uuid4()), name = payload.name, complete = False)
+    categories.append(new_category)
+    return new_category
+
+
+@app.patch("/categories/{category_id}")
+def update_category(category_id:str, payload: CategoryUpdateSchema):
+    for category in categories:
+        if category.id == category_id:
+            if payload.name:
+                category.name = payload.name
+            if payload.complete is not None:
+                category.complete = payload.complete
+            return category
+
+@app.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_category(category_id):
+    for category in categories:
+        if category.id == category_id:
+            categories.remove(category)
