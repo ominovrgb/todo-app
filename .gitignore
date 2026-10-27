@@ -1,5 +1,30 @@
-venv/
-__pycache__/
-.idea/
-node_modules/
+# Python
+**/.venv/
+**/__pycache__/
+*.pyc
+
+# Environment variables
 .env
+.env.*
+!.env.example
+
+# PyCharm
+.idea/
+
+# Node.js
+node_modules/
+.pnp
+.pnp.js
+
+# Testing and builds
+coverage/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System files
+.DS_Store
