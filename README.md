@@ -2,7 +2,7 @@
 
 **A full-stack task management application built with FastAPI, React, and PostgreSQL.**
 
-A learning project focused on REST API development, database integration, and connecting a Python backend with a React frontend.
+A learning project focused on REST API development, relational databases, and layered backend architecture.
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)
@@ -15,19 +15,23 @@ A learning project focused on REST API development, database integration, and co
 
 ## Overview
 
-ToDo App allows users to manage tasks and categories through a React interface connected to a FastAPI REST API.
+ToDo App provides a React interface for managing tasks and categories through a FastAPI REST API.
 
-The application uses **SQLAlchemy ORM** with **PostgreSQL** for persistent data storage, replacing the original in-memory implementation.
+The backend follows a **Layered Architecture**, separating HTTP handling, business logic, database operations, and configuration.
+
+PostgreSQL provides persistent storage, while SQLAlchemy handles database interactions.
 
 ### Features
 
 - **Task Management** — create, view, update, and delete tasks
 - **Completion Tracking** — mark tasks as completed or pending
 - **Category Management** — create, rename, update, and delete categories
-- **Persistent Storage** — store tasks and categories in PostgreSQL
-- **UUID Identifiers** — unique IDs for tasks and categories
-- **Data Validation** — Pydantic request and response schemas
-- **Error Handling** — HTTP 404 responses for missing resources
+- **Persistent Storage** — PostgreSQL with Docker volumes
+- **Layered Architecture** — routers, services, repositories, and database
+- **Dependency Injection** — FastAPI's `Depends()`
+- **Validation** — Pydantic request and response schemas
+- **Error Handling** — HTTP 404 for missing resources
+- **Automated Tests** — 30 tests covering backend functionality
 - **API Documentation** — interactive Swagger UI
 
 ---
@@ -40,59 +44,100 @@ The application uses **SQLAlchemy ORM** with **PostgreSQL** for persistent data 
 | Frontend | React, JavaScript, Axios, CSS |
 | Database | PostgreSQL |
 | ORM | SQLAlchemy |
-| Database Driver | psycopg |
+| Database Driver | psycopg 3 |
+| Testing | Automated backend tests |
 | Development | Docker, Git, Uvicorn |
 
 ## Architecture
 
+The backend separates responsibilities into independent layers.
+
 ```text
-                  React Frontend
-                  localhost:3000
-                        |
-                        | HTTP / Axios
-                        v
-                  FastAPI Backend
-                  localhost:8080
-                        |
-                        | SQLAlchemy ORM
-                        v
-                   PostgreSQL
-                  localhost:15432
-                        |
-                        v
-                   Docker Volume
+React Frontend
+      |
+      | HTTP / Axios
+      v
+FastAPI Router
+      |
+      | Dependency Injection
+      v
+Service Layer
+      |
+      | Business Logic & Transactions
+      v
+Repository Layer
+      |
+      | SQLAlchemy ORM
+      v
+PostgreSQL Database
+      |
+      v
+Docker Volume
 ```
 
-**How it works:**
+### Layer Responsibilities
 
-1. React sends HTTP requests to FastAPI.
-2. FastAPI validates incoming data using Pydantic.
-3. SQLAlchemy handles database operations.
-4. PostgreSQL stores tasks and categories.
-5. FastAPI returns JSON responses to the frontend.
+| Layer | Responsibility |
+| --- | --- |
+| Router | HTTP requests, responses, and status codes |
+| Service | Business logic, validation, and transactions |
+| Repository | Database queries and ORM operations |
+| Models | SQLAlchemy database models |
+| Schemas | Pydantic request and response validation |
+| Database | Engine and session management |
+| Core | Application configuration |
+
+Database transactions are committed at the service layer. Repositories focus on data access without managing commits.
 
 ## Project Structure
 
 ```text
 todo-app/
 ├── todo-app-backend/
-│   ├── .venv/                # Python virtual environment (ignored)
-│   ├── .env                  # Local environment variables (ignored)
-│   ├── main.py               # FastAPI routes and ORM models
-│   └── requirements.txt      # Python dependencies
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── routers/
+│   │   │   │   ├── task.py
+│   │   │   │   └── category.py
+│   │   │   └── dependencies.py
+│   │   ├── core/
+│   │   │   └── config.py
+│   │   ├── db/
+│   │   │   └── session.py
+│   │   ├── models/
+│   │   │   ├── base.py
+│   │   │   ├── task.py
+│   │   │   └── category.py
+│   │   ├── schemas/
+│   │   │   ├── task.py
+│   │   │   └── category.py
+│   │   ├── repositories/
+│   │   │   ├── task.py
+│   │   │   └── category.py
+│   │   ├── services/
+│   │   │   ├── task.py
+│   │   │   └── category.py
+│   │   └── main.py
+│   ├── tests/
+│   │   ├── test_tasks.py
+│   │   ├── test_categories.py
+│   │   ├── test_api.py
+│   │   └── test_startup.py
+│   ├── .env                  # Local configuration (ignored)
+│   ├── .venv/                # Virtual environment (ignored)
+│   └── requirements.txt
 │
 ├── todo-app-frontend/
-│   ├── node_modules/         # Installed npm packages (ignored)
-│   ├── public/               # Static assets
-│   ├── src/                  # React application
-│   ├── package.json          # Dependencies and scripts
-│   └── package-lock.json     # Locked dependency versions
+│   ├── public/
+│   ├── src/
+│   ├── package.json
+│   └── package-lock.json
 │
-├── .gitignore                # Git exclusion rules
-└── README.md                 # Project documentation
+├── .gitignore
+└── README.md
 ```
 
-**Note:** Virtual environments, installed packages, and local `.env` files are excluded from version control.
+Local dependencies, virtual environments, and `.env` files are excluded from version control.
 
 ---
 
@@ -100,19 +145,15 @@ todo-app/
 
 ### Prerequisites
 
-Make sure you have installed:
-
-- Python 3.10+
+- Python 3.12+
 - Node.js and npm
 - Docker Desktop with WSL 2 integration, or Docker Engine on Linux
 
-The following instructions are intended for Ubuntu/Linux, including Ubuntu on WSL 2.
+The commands below use Ubuntu/Linux, including Ubuntu on WSL 2.
 
-### 1. PostgreSQL Setup
+### 1. Start PostgreSQL
 
-Start Docker Desktop if using Windows.
-
-For a fresh setup, create a PostgreSQL 18 container with a named volume:
+For a new installation, create a PostgreSQL 18 container with persistent storage:
 
 ```bash
 docker run -d \
@@ -125,45 +166,26 @@ docker run -d \
 
 Replace `YOUR_PASSWORD` with your own local database password.
 
-If the container already exists, start it instead:
+If the container already exists:
 
 ```bash
 docker start pg-container
 ```
 
-Verify that PostgreSQL is running:
+Verify its status:
 
 ```bash
 docker ps
 ```
 
-PostgreSQL is accessible through `localhost:15432`.
+### 2. Set Up the Backend
 
-The named Docker volume provides persistent data storage across container restarts.
-
-### 2. Backend Setup
-
-From the project root, navigate to the backend:
+From the project root:
 
 ```bash
 cd todo-app-backend
-```
-
-Create a virtual environment:
-
-```bash
 python3 -m venv .venv
-```
-
-Activate it:
-
-```bash
 source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
 python -m pip install -r requirements.txt
 ```
 
@@ -173,47 +195,47 @@ Create a `.env` file inside `todo-app-backend`:
 DATABASE_URL=postgresql+psycopg://postgres:YOUR_PASSWORD@127.0.0.1:15432/postgres
 ```
 
-Replace `YOUR_PASSWORD` with the password configured for your local PostgreSQL container.
+Replace `YOUR_PASSWORD` with your own local password.
 
-The backend loads environment variables using `python-dotenv`.
+The application loads environment variables through `python-dotenv`.
 
-**Security:** Never commit your `.env` file or real database credentials to Git.
+**Never commit your `.env` file or real credentials.**
 
-Start FastAPI:
+### 3. Initialize Database Tables
+
+For a **new, empty database**, create the required tables once:
 
 ```bash
-uvicorn main:app --reload --port 8080
+python -c "from app.db.session import engine; from app.models.base import Base; from app.models.task import TaskORM; from app.models.category import CategoryORM; Base.metadata.create_all(bind=engine)"
 ```
 
-SQLAlchemy automatically creates missing tables when the application starts.
+This step is unnecessary if the tables already exist.
+
+The application no longer creates tables automatically at startup. Future schema changes should be managed through database migrations.
+
+### 4. Start the Backend
+
+```bash
+python -m uvicorn app.main:app --reload --port 8080
+```
 
 **Backend:** http://localhost:8080
 
 **Swagger UI:** http://localhost:8080/docs
 
-### 3. Frontend Setup
+### 5. Start the Frontend
 
-Open a second terminal and navigate to the frontend directory from the project root:
+Open a second terminal. From the project root:
 
 ```bash
 cd todo-app-frontend
-```
-
-Install dependencies:
-
-```bash
 npm install
-```
-
-Start the development server:
-
-```bash
 npm run dev
 ```
 
 **Frontend:** http://localhost:3000
 
-The database, backend, and frontend must all be running to use the full application.
+PostgreSQL, FastAPI, and React must be running to use the full application.
 
 ---
 
@@ -239,9 +261,7 @@ The database, backend, and frontend must all be running to use the full applicat
 
 ### Example Requests
 
-**Create a task**
-
-`POST /tasks`
+**Create a task — POST `/tasks`**
 
 ```json
 {
@@ -249,9 +269,7 @@ The database, backend, and frontend must all be running to use the full applicat
 }
 ```
 
-**Update a task**
-
-`PATCH /tasks/{task_id}`
+**Update a task — PATCH `/tasks/{task_id}`**
 
 ```json
 {
@@ -260,9 +278,7 @@ The database, backend, and frontend must all be running to use the full applicat
 }
 ```
 
-**Create a category**
-
-`POST /categories`
+**Create a category — POST `/categories`**
 
 ```json
 {
@@ -270,9 +286,7 @@ The database, backend, and frontend must all be running to use the full applicat
 }
 ```
 
-**Update a category**
-
-`PATCH /categories/{category_id}`
+**Update a category — PATCH `/categories/{category_id}`**
 
 ```json
 {
@@ -281,27 +295,35 @@ The database, backend, and frontend must all be running to use the full applicat
 }
 ```
 
-For interactive API testing, use the [Swagger UI](http://localhost:8080/docs) while the backend is running.
+Missing tasks or categories return HTTP 404. Successful deletions return HTTP 204.
 
 ---
 
+## Testing
+
+The backend includes **30 automated tests** covering:
+
+- Task and category CRUD
+- Request and response validation
+- HTTP status codes
+- Partial updates, including boolean `false`
+- Missing resources and 404 responses
+- Database transaction handling and rollback
+- CORS configuration
+- OpenAPI schema and application startup
+
+The automated API tests use isolated database session substitutes. The application has also been manually checked through the React frontend with PostgreSQL.
+
 ## Database & Persistence
 
-The application uses **SQLAlchemy ORM** to interact with PostgreSQL.
+Tasks and categories are stored in PostgreSQL using SQLAlchemy ORM.
 
-Its database layer includes:
+- Database sessions are managed using FastAPI dependencies.
+- Services manage commits and rollbacks.
+- Repositories handle ORM queries.
+- Docker volumes provide persistent storage across container restarts.
 
-- ORM models representing database tables
-- SQLAlchemy sessions for database operations
-- FastAPI dependencies for session management
-- Pydantic schemas for data validation
-- SQLAlchemy queries for CRUD operations
-
-Tasks and categories remain stored after restarting the FastAPI server.
-
-PostgreSQL runs inside Docker with volume-based persistent storage, allowing data to survive container restarts.
-
-The existing database volume can also be reused when recreating a container.
+The current development database uses a Docker volume. Removing a container does not automatically reconnect a new container to its previous anonymous volume.
 
 ---
 
@@ -309,11 +331,8 @@ The existing database volume can also be reused when recreating a container.
 
 - No authentication or user accounts
 - No automated database migrations
-- No automated test suite
 - No production deployment
-- No Docker Compose setup yet
-
-These features may be added as the project evolves.
+- No Docker Compose configuration yet
 
 ---
 
@@ -321,4 +340,4 @@ These features may be added as the project evolves.
 
 The React frontend is based on the [todo-app-frontend learning template](https://github.com/makedonsky-it/todo-app-frontend).
 
-The FastAPI backend, PostgreSQL integration, SQLAlchemy ORM implementation, and category-completion extension were implemented as part of a backend development learning project.
+The backend, PostgreSQL integration, SQLAlchemy implementation, layered architecture refactoring, and category-completion extension were developed as part of a Python Backend learning project.
