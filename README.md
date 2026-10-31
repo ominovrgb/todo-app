@@ -15,7 +15,9 @@ A portfolio learning project focused on REST API development, layered backend ar
 
 ## Overview
 
-ToDo App provides **Taskspace**, a dark SaaS-style React dashboard for managing tasks and categories through a FastAPI REST API.
+ToDo App is a compact, playful retro-style productivity application for managing tasks and categories through a React frontend and FastAPI REST API.
+
+The pastel interface combines a pale blue dotted background, cream cards, dark outlines, offset shadows, and rounded controls. Mint completion states and pink and yellow accents highlight actions and progress. A centered layout adapts to desktop and mobile screens.
 
 The backend follows a **Layered Architecture**, separating HTTP handling, business logic, database operations, and configuration.
 
@@ -23,14 +25,15 @@ PostgreSQL provides persistent storage, while SQLAlchemy handles database intera
 
 ### Features
 
-- **Dashboard Navigation** — Tasks and Categories views with sidebar counts and a responsive mobile layout
+- **View Navigation** — Tasks and Categories views with counts in the header and a responsive layout
 - **Task Management** — create, edit, delete, and mark tasks as active or completed
 - **Task Filters** — All, Active, and Completed views with counts calculated from loaded data
+- **Stable Task Ordering** — existing tasks retain their relative order across refetches within the current session; newly discovered tasks append to the list
 - **Category Management** — create, rename, delete, and toggle category completion
 - **Refined Editing** — separate drafts for each view, Enter to submit, Escape to cancel editing, and protection against duplicate submissions
 - **Request Feedback** — loading skeletons, empty states, refresh and retry controls, success notifications, and actionable errors
 - **Accessible Controls** — labeled inputs and buttons, visible keyboard focus, a skip link, status announcements, and focus restoration
-- **Motion and Styling** — dark theme, subtle transitions and animations, and reduced-motion support
+- **Motion and Styling** — pastel colors, subtle control transitions, loading indicators, and reduced-motion support
 - **Persistent Storage** — PostgreSQL through SQLAlchemy, with a Docker volume in the local setup below
 - **Layered Backend** — routers, services, repositories, dependency injection, and Pydantic validation
 - **Automated Tests** — backend API and service tests, plus frontend interaction tests
@@ -91,17 +94,20 @@ Services commit successful writes and roll back failures. Repositories handle da
 
 ### Frontend Architecture
 
-The frontend is a React single-page application built with `react-scripts`. `src/index.js` mounts `App` in React Strict Mode. The dashboard, shared UI components, and `useCollection` hook currently live in `src/App.js`.
+The frontend is a React single-page application built with `react-scripts`. `src/index.js` mounts `App` in React Strict Mode. The application UI, shared components, `useCollection` hook, and `preserveCollectionOrder` helper currently live in `src/App.js`.
 
 | Part | Responsibility |
 | --- | --- |
 | `App` | View selection, task filters, form drafts, editing, CRUD handlers, and focus management |
-| `useCollection` | Independent task/category data, loading and error state, refreshes, and pending mutations |
+| `useCollection` | Independent task/category data, loading and error state, refreshes, feedback, and pending mutations |
+| `preserveCollectionOrder` | Reconcile fresh data by ID while retaining existing order and appending newly discovered records |
 | Shared components | Record rows, feedback notices, loading skeletons, empty states, and SVG icons |
 | `index.css` | Theme variables, typography, global styles, and keyboard focus indicators |
-| `App.css` | Dashboard layout, responsive breakpoints, component styles, and animations |
+| `App.css` | Compact layout, responsive breakpoints, card and control styles, and motion |
 
-Sidebar navigation and task filtering use local React state. Both collections load through Axios; successful `POST`, `PATCH`, and `DELETE` requests trigger a fresh `GET` for the affected collection. Pending operations disable conflicting controls, failed saves preserve drafts, and failed refreshes retain the last loaded list and counts.
+Header navigation and task filtering use local React state. Both collections load through Axios; successful `POST`, `PATCH`, and `DELETE` requests trigger a fresh `GET` for the affected collection. Pending operations disable conflicting controls, failed saves preserve drafts, and failed refreshes retain the last loaded list and counts.
+
+Task ordering is stable across refetches within the current session. `preserveCollectionOrder` keeps surviving IDs in their existing relative order, updates their data, removes missing records, and appends newly discovered IDs in response order. Completion changes and edits do not move tasks in the All view; filtered views retain the relative order of matching tasks. This order exists only in React memory: a full page reload starts from the next API response, so order is not guaranteed across reloads.
 
 Axios calls FastAPI directly at `http://localhost:8080`, defined by `API_BASE_URL` in `src/App.js`. FastAPI allows the local frontend origins through CORS. Tasks use `title` and `completed`; categories use `name` and `complete`. Categories are standalone records and are not assigned to tasks.
 
@@ -147,9 +153,9 @@ todo-app/
 │   │   ├── manifest.json
 │   │   └── robots.txt
 │   ├── src/
-│   │   ├── App.js            # Dashboard, shared components, and collection hook
+│   │   ├── App.js            # App UI, shared components, and collection helpers
 │   │   ├── App.css           # Layout, components, responsive styles, and motion
-│   │   ├── App.test.js       # Dashboard interaction tests
+│   │   ├── App.test.js       # Frontend interaction and ordering tests
 │   │   ├── index.js          # React entry point
 │   │   ├── index.css         # Theme variables and global styles
 │   │   ├── reportWebVitals.js
@@ -395,13 +401,14 @@ npm test -- --watchAll=false --runInBand
 
 For interactive watch mode, run `npm test` in the frontend directory.
 
-`src/App.test.js` uses Jest and React Testing Library with mocked Axios requests. It covers:
+`src/App.test.js` contains **46 tests in one suite**, using Jest and React Testing Library with mocked Axios requests. Coverage includes:
 
 - Task and category CRUD payloads, completion toggles, filters, and counts
+- Stable task ordering with reordered UUID responses, fresh data after edits, survivor order after deletion, and appending new tasks
 - Loading, empty states, validation errors, retry, and refresh failures
 - Draft preservation, minimal PATCH requests, and duplicate-submission prevention
-- Keyboard submission/cancellation, focus and caret stability, and IME composition
-- Pending operations, notification behavior, and reduced-motion handling
+- Keyboard submission/cancellation, focus and caret stability, nearby focus restoration after deletion without scrolling, and IME composition
+- Controls locked through mutations and silent refetches, notification behavior, and absence of list fades with and without reduced-motion preferences
 
 Frontend tests run without FastAPI or PostgreSQL. They verify component interactions and request contracts, not full browser-to-database integration.
 
