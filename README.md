@@ -2,7 +2,7 @@
 
 **A full-stack task management application built with FastAPI, React, and PostgreSQL.**
 
-A learning project focused on REST API development, relational databases, and layered backend architecture.
+A portfolio learning project focused on REST API development, layered backend architecture, relational databases, and responsive React interfaces.
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)
@@ -15,7 +15,7 @@ A learning project focused on REST API development, relational databases, and la
 
 ## Overview
 
-ToDo App provides a React interface for managing tasks and categories through a FastAPI REST API.
+ToDo App provides **Taskspace**, a dark SaaS-style React dashboard for managing tasks and categories through a FastAPI REST API.
 
 The backend follows a **Layered Architecture**, separating HTTP handling, business logic, database operations, and configuration.
 
@@ -23,15 +23,17 @@ PostgreSQL provides persistent storage, while SQLAlchemy handles database intera
 
 ### Features
 
-- **Task Management** — create, view, update, and delete tasks
-- **Completion Tracking** — mark tasks as completed or pending
-- **Category Management** — create, rename, update, and delete categories
-- **Persistent Storage** — PostgreSQL with Docker volumes
-- **Layered Architecture** — routers, services, repositories, and database
-- **Dependency Injection** — FastAPI's `Depends()`
-- **Validation** — Pydantic request and response schemas
-- **Error Handling** — HTTP 404 for missing resources
-- **Automated Tests** — 30 tests covering backend functionality
+- **Dashboard Navigation** — Tasks and Categories views with sidebar counts and a responsive mobile layout
+- **Task Management** — create, edit, delete, and mark tasks as active or completed
+- **Task Filters** — All, Active, and Completed views with counts calculated from loaded data
+- **Category Management** — create, rename, delete, and toggle category completion
+- **Refined Editing** — separate drafts for each view, Enter to submit, Escape to cancel editing, and protection against duplicate submissions
+- **Request Feedback** — loading skeletons, empty states, refresh and retry controls, success notifications, and actionable errors
+- **Accessible Controls** — labeled inputs and buttons, visible keyboard focus, a skip link, status announcements, and focus restoration
+- **Motion and Styling** — dark theme, subtle transitions and animations, and reduced-motion support
+- **Persistent Storage** — PostgreSQL through SQLAlchemy, with a Docker volume in the local setup below
+- **Layered Backend** — routers, services, repositories, dependency injection, and Pydantic validation
+- **Automated Tests** — backend API and service tests, plus frontend interaction tests
 - **API Documentation** — interactive Swagger UI
 
 ---
@@ -40,17 +42,18 @@ PostgreSQL provides persistent storage, while SQLAlchemy handles database intera
 
 | Layer | Technologies |
 | --- | --- |
-| Backend | Python, FastAPI, Pydantic |
-| Frontend | React, JavaScript, Axios, CSS |
+| Backend | Python, FastAPI, Pydantic, pydantic-settings |
+| Frontend | React 19, JavaScript, Axios, CSS, Create React App (react-scripts) |
 | Database | PostgreSQL |
 | ORM | SQLAlchemy |
 | Database Driver | psycopg 3 |
-| Testing | Automated backend tests |
+| Backend Testing | pytest, unittest.mock |
+| Frontend Testing | Jest, React Testing Library, jest-dom, user-event |
 | Development | Docker, Git, Uvicorn |
 
 ## Architecture
 
-The backend separates responsibilities into independent layers.
+The backend follows **Router → Service → Repository → SQLAlchemy → PostgreSQL**.
 
 ```text
 React Frontend
@@ -70,9 +73,6 @@ Repository Layer
       | SQLAlchemy ORM
       v
 PostgreSQL Database
-      |
-      v
-Docker Volume
 ```
 
 ### Layer Responsibilities
@@ -87,7 +87,23 @@ Docker Volume
 | Database | Engine and session management |
 | Core | Application configuration |
 
-Database transactions are committed at the service layer. Repositories focus on data access without managing commits.
+Services commit successful writes and roll back failures. Repositories handle data access without committing transactions. FastAPI dependencies provide a database session per request and close it afterward.
+
+### Frontend Architecture
+
+The frontend is a React single-page application built with `react-scripts`. `src/index.js` mounts `App` in React Strict Mode. The dashboard, shared UI components, and `useCollection` hook currently live in `src/App.js`.
+
+| Part | Responsibility |
+| --- | --- |
+| `App` | View selection, task filters, form drafts, editing, CRUD handlers, and focus management |
+| `useCollection` | Independent task/category data, loading and error state, refreshes, and pending mutations |
+| Shared components | Record rows, feedback notices, loading skeletons, empty states, and SVG icons |
+| `index.css` | Theme variables, typography, global styles, and keyboard focus indicators |
+| `App.css` | Dashboard layout, responsive breakpoints, component styles, and animations |
+
+Sidebar navigation and task filtering use local React state. Both collections load through Axios; successful `POST`, `PATCH`, and `DELETE` requests trigger a fresh `GET` for the affected collection. Pending operations disable conflicting controls, failed saves preserve drafts, and failed refreshes retain the last loaded list and counts.
+
+Axios calls FastAPI directly at `http://localhost:8080`, defined by `API_BASE_URL` in `src/App.js`. FastAPI allows the local frontend origins through CORS. Tasks use `title` and `completed`; categories use `name` and `complete`. Categories are standalone records and are not assigned to tasks.
 
 ## Project Structure
 
@@ -123,13 +139,21 @@ todo-app/
 │   │   ├── test_categories.py
 │   │   ├── test_api.py
 │   │   └── test_startup.py
-│   ├── .env                  # Local configuration (ignored)
-│   ├── .venv/                # Virtual environment (ignored)
 │   └── requirements.txt
 │
 ├── todo-app-frontend/
 │   ├── public/
+│   │   ├── index.html        # HTML entry point and page metadata
+│   │   ├── manifest.json
+│   │   └── robots.txt
 │   ├── src/
+│   │   ├── App.js            # Dashboard, shared components, and collection hook
+│   │   ├── App.css           # Layout, components, responsive styles, and motion
+│   │   ├── App.test.js       # Dashboard interaction tests
+│   │   ├── index.js          # React entry point
+│   │   ├── index.css         # Theme variables and global styles
+│   │   ├── reportWebVitals.js
+│   │   └── setupTests.js     # jest-dom setup
 │   ├── package.json
 │   └── package-lock.json
 │
@@ -137,7 +161,7 @@ todo-app/
 └── README.md
 ```
 
-Local dependencies, virtual environments, and `.env` files are excluded from version control.
+The tree lists the tracked application files. Local `.env` files, `.venv/`, `node_modules/`, and generated builds are excluded from version control.
 
 ---
 
@@ -146,8 +170,8 @@ Local dependencies, virtual environments, and `.env` files are excluded from ver
 ### Prerequisites
 
 - Python 3.12+
-- Node.js and npm
-- Docker Desktop with WSL 2 integration, or Docker Engine on Linux
+- Node.js and npm (the repository does not pin a Node.js version)
+- Docker Desktop with WSL 2 integration, or Docker Engine on Linux, for the PostgreSQL setup below
 
 The commands below use Ubuntu/Linux, including Ubuntu on WSL 2.
 
@@ -195,9 +219,9 @@ Create a `.env` file inside `todo-app-backend`:
 DATABASE_URL=postgresql+psycopg://postgres:YOUR_PASSWORD@127.0.0.1:15432/postgres
 ```
 
-Replace `YOUR_PASSWORD` with your own local password.
+Use the same password as the PostgreSQL container. Percent-encode any URL-reserved characters in the password when placing it in `DATABASE_URL`.
 
-The application loads environment variables through `python-dotenv`.
+Configuration is loaded through **Pydantic Settings** (`pydantic-settings`); see [Configuration](#configuration) below.
 
 **Never commit your `.env` file or real credentials.**
 
@@ -209,11 +233,13 @@ For a **new, empty database**, create the required tables once:
 python -c "from app.db.session import engine; from app.models.base import Base; from app.models.task import TaskORM; from app.models.category import CategoryORM; Base.metadata.create_all(bind=engine)"
 ```
 
-This step is unnecessary if the tables already exist.
+Run this from `todo-app-backend` with the virtual environment active and PostgreSQL running. It is unnecessary if the tables already exist.
 
-The application no longer creates tables automatically at startup. Future schema changes should be managed through database migrations.
+The application does not create or alter tables at startup. `create_all` creates missing tables; it does not migrate existing schemas. Automated migrations are not implemented.
 
 ### 4. Start the Backend
+
+In the same backend directory with the virtual environment active:
 
 ```bash
 python -m uvicorn app.main:app --reload --port 8080
@@ -235,7 +261,34 @@ npm run dev
 
 **Frontend:** http://localhost:3000
 
-PostgreSQL, FastAPI, and React must be running to use the full application.
+Keep the frontend on port `3000` to match the default CORS origins. PostgreSQL, FastAPI, and the React development server must be running to use the full application.
+
+To create a frontend build, run this from `todo-app-frontend`:
+
+```bash
+npm run build
+```
+
+This generates static assets in `build/`; serving or deploying them requires a separate setup.
+
+---
+
+## Configuration
+
+`app/core/config.py` defines a `Settings` class that inherits from `pydantic_settings.BaseSettings`. Its `model_config` uses `SettingsConfigDict` to load `todo-app-backend/.env` through an absolute path derived from the configuration file. Environment variables take precedence over values in that file.
+
+| Setting | Type | Default / requirement |
+| --- | --- | --- |
+| `DATABASE_URL` | String | Required SQLAlchemy connection URL; use `postgresql+psycopg://` for PostgreSQL |
+| `cors_allowed_origins` | List of strings | `["http://localhost:3000", "http://127.0.0.1:3000"]` |
+
+`get_settings()` caches the settings instance with `lru_cache`. Settings are validated when loaded; restart the backend after changing configuration. To override the CORS list through an environment variable or `.env`, provide a JSON array, for example:
+
+```dotenv
+CORS_ALLOWED_ORIGINS='["http://localhost:3000","http://127.0.0.1:3000"]'
+```
+
+The frontend API address is currently a constant in `src/App.js`, not a frontend environment variable. If the backend address changes, update that constant; if the frontend origin changes, update the backend CORS setting.
 
 ---
 
@@ -258,6 +311,17 @@ PostgreSQL, FastAPI, and React must be running to use the full application.
 | `POST` | `/categories` | Create a category |
 | `PATCH` | `/categories/{category_id}` | Update a category |
 | `DELETE` | `/categories/{category_id}` | Delete a category |
+
+### Request Schemas
+
+| Operation | JSON body fields |
+| --- | --- |
+| Create task | `title`: required string |
+| Update task | `title`: optional string or `null`; `completed`: optional boolean or `null` |
+| Create category | `name`: required string |
+| Update category | `name`: optional string or `null`; `complete`: optional boolean or `null` |
+
+PATCH requests update only supplied, non-null fields; omitted and `null` fields remain unchanged. Both `true` and `false` are supported for completion updates. GET and DELETE requests require no JSON body.
 
 ### Example Requests
 
@@ -295,24 +359,51 @@ PostgreSQL, FastAPI, and React must be running to use the full application.
 }
 ```
 
-Missing tasks or categories return HTTP 404. Successful deletions return HTTP 204.
+List and update requests return HTTP 200; creation returns HTTP 201. Task responses contain `id`, `title`, and `completed`; category responses contain `id`, `name`, and `complete`. New records start with completion set to `false`. Missing tasks or categories return HTTP 404, invalid request data returns HTTP 422, and successful deletions return HTTP 204 with no body.
 
 ---
 
 ## Testing
 
-The backend includes **30 automated tests** covering:
+### Backend
 
-- Task and category CRUD
-- Request and response validation
-- HTTP status codes
-- Partial updates, including boolean `false`
-- Missing resources and 404 responses
-- Database transaction handling and rollback
-- CORS configuration
-- OpenAPI schema and application startup
+From the project root, after installing the backend dependencies and configuring `DATABASE_URL`:
 
-The automated API tests use isolated database session substitutes. The application has also been manually checked through the React frontend with PostgreSQL.
+```bash
+cd todo-app-backend
+source .venv/bin/activate
+python -m pytest tests -q
+```
+
+| Test file | Coverage |
+| --- | --- |
+| `test_tasks.py` | Task service CRUD, serialization, partial updates, missing records, commits, and rollback |
+| `test_categories.py` | Category service CRUD, completion updates, missing records, commits, and rollback |
+| `test_api.py` | ASGI request validation, response bodies and status codes, all eight CRUD operations, and CORS |
+| `test_startup.py` | Uvicorn startup/shutdown, OpenAPI, and Swagger UI |
+
+The tests use mocked SQLAlchemy sessions and do not require a running PostgreSQL server. A valid `DATABASE_URL` is still required because application imports initialize settings and the engine. The startup test launches a local Uvicorn process and binds a loopback socket; it uses Unix file-descriptor passing and is intended for Linux/WSL. These tests do not verify queries against a real PostgreSQL database.
+
+### Frontend
+
+From the project root, after installing the frontend dependencies:
+
+```bash
+cd todo-app-frontend
+npm test -- --watchAll=false --runInBand
+```
+
+For interactive watch mode, run `npm test` in the frontend directory.
+
+`src/App.test.js` uses Jest and React Testing Library with mocked Axios requests. It covers:
+
+- Task and category CRUD payloads, completion toggles, filters, and counts
+- Loading, empty states, validation errors, retry, and refresh failures
+- Draft preservation, minimal PATCH requests, and duplicate-submission prevention
+- Keyboard submission/cancellation, focus and caret stability, and IME composition
+- Pending operations, notification behavior, and reduced-motion handling
+
+Frontend tests run without FastAPI or PostgreSQL. They verify component interactions and request contracts, not full browser-to-database integration.
 
 ## Database & Persistence
 
@@ -321,18 +412,18 @@ Tasks and categories are stored in PostgreSQL using SQLAlchemy ORM.
 - Database sessions are managed using FastAPI dependencies.
 - Services manage commits and rollbacks.
 - Repositories handle ORM queries.
-- Docker volumes provide persistent storage across container restarts.
-
-The current development database uses a Docker volume. Removing a container does not automatically reconnect a new container to its previous anonymous volume.
+- The setup above mounts the named volume `todo_postgres_data` at `/var/lib/postgresql` for PostgreSQL 18. Reuse the same volume when recreating that container to retain its data.
 
 ---
 
 ## Current Limitations
 
 - No authentication or user accounts
-- No automated database migrations
-- No production deployment
-- No Docker Compose configuration yet
+- Categories cannot be assigned to tasks
+- Task filtering is local; there is no server-side search or pagination
+- The frontend API URL is configured in source
+- No automated database migrations or Alembic configuration
+- No production deployment, Docker Compose configuration, Redis integration, or CI/CD pipeline
 
 ---
 
