@@ -1,8 +1,8 @@
 {
-  "short_name": "Taskspace",
-  "name": "Taskspace — Tasks & Categories",
+  "short_name": "ToDo App",
+  "name": "ToDo App",
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#101114",
-  "background_color": "#101114"
+  "theme_color": "#edf5f7",
+  "background_color": "#edf5f7"
 }

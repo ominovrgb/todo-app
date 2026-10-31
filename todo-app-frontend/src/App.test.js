@@ -2,6 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axios from 'axios';
+import { readFileSync } from 'fs';
 import App from './App';
 
 jest.mock('axios', () => ({
@@ -28,13 +29,13 @@ beforeEach(() => {
   });
   axios.patch.mockImplementation(async (url, data) => {
     const [, resource, id] = new URL(url).pathname.split('/');
-    const record = records[resource].find((item) => item.id === Number(id));
+    const record = records[resource].find((item) => String(item.id) === id);
     Object.assign(record, data);
     return { data: record };
   });
   axios.delete.mockImplementation(async (url) => {
     const [, resource, id] = new URL(url).pathname.split('/');
-    records[resource] = records[resource].filter((item) => item.id !== Number(id));
+    records[resource] = records[resource].filter((item) => String(item.id) !== id);
     return { data: null };
   });
 });
@@ -51,6 +52,160 @@ async function waitForSaved(text) {
   await screen.findByText(text);
   await waitFor(() => expect(screen.getByRole('textbox')).not.toHaveAttribute('readonly'));
 }
+
+describe('stable client order with unordered UUID task responses', () => {
+  const titles = ['Plan release', 'Review notes', 'Write documentation'];
+  const rows = () => within(screen.getByRole('list')).getAllByRole('listitem');
+  const expectOrder = (expected) => {
+    expect(rows().map((row) => row.querySelector('.record-title').textContent)).toEqual(expected);
+  };
+  const expectSameRows = (expected) => {
+    const current = rows();
+    expect(current).toHaveLength(expected.length);
+    current.forEach((row, index) => expect(row).toBe(expected[index]));
+  };
+  const reverseRefetches = () => {
+    axios.get.mockImplementation(async (url) => ({
+      data: [...records[url.split('/').pop()]].reverse().map((item) => ({ ...item })),
+    }));
+  };
+
+  beforeEach(() => {
+    // Deliberately neither lexical UUID order nor completion order.
+    const ids = [
+      'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      '11111111-1111-4111-8111-111111111111',
+      '88888888-8888-4888-8888-888888888888',
+    ];
+    records.tasks = records.tasks.map((record, index) => ({ ...record, id: ids[index] }));
+  });
+
+  test('completion and explicit refresh preserve All order and mounted rows', async () => {
+    await renderLoaded();
+    const originalRows = rows();
+    const input = screen.getByRole('textbox');
+    const list = screen.getByRole('list');
+    expectOrder(titles);
+    reverseRefetches();
+
+    fireEvent.click(within(originalRows[0]).getByRole('checkbox'));
+    await waitForSaved('Task marked as completed.');
+    expectOrder(titles);
+    expectSameRows(originalRows);
+    expect(within(originalRows[0]).getByRole('checkbox')).toBeChecked();
+
+    fireEvent.click(within(originalRows[0]).getByRole('checkbox'));
+    await waitForSaved('Task marked as active.');
+    click('Refresh tasks');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh tasks' })).toBeEnabled());
+    expectOrder(titles);
+    expectSameRows(originalRows);
+    expect(screen.getByRole('textbox')).toBe(input);
+    expect(screen.getByRole('list')).toBe(list);
+  });
+
+  test('editing uses fresh data without moving or remounting rows', async () => {
+    await renderLoaded();
+    const originalRows = rows();
+    reverseRefetches();
+    click('Edit task “Plan release”');
+    type('Task title', 'Plan next release');
+    click('Save changes');
+    await waitForSaved('Task updated.');
+    expectOrder(['Plan next release', ...titles.slice(1)]);
+    expectSameRows(originalRows);
+    expect(axios.patch).toHaveBeenCalledWith(`${API}/tasks/${records.tasks[0].id}`, { title: 'Plan next release' });
+  });
+
+  test.each([0, 1, 2])('deleting row %s preserves survivor order and restores nearby focus without scrolling', async (index) => {
+    await renderLoaded();
+    const originalRows = rows();
+    const remainingRows = originalRows.filter((_, rowIndex) => rowIndex !== index);
+    const targetRow = originalRows[index + 1] || originalRows[index - 1];
+    const target = within(targetRow).getByRole('button', { name: /^Delete task/ });
+    const targetFocus = jest.spyOn(target, 'focus');
+    const editorFocus = jest.spyOn(screen.getByRole('textbox'), 'focus');
+    const scroll = jest.spyOn(window, 'scrollTo');
+    reverseRefetches();
+    try {
+      userEvent.click(within(originalRows[index]).getByRole('button', { name: /^Delete task/ }));
+      await waitForSaved('Task deleted.');
+      expectOrder(titles.filter((_, rowIndex) => rowIndex !== index));
+      expectSameRows(remainingRows);
+      expect(originalRows[index]).not.toBeInTheDocument();
+      expect(target).toHaveFocus();
+      expect(targetFocus).toHaveBeenLastCalledWith({ preventScroll: true });
+      expect(editorFocus).not.toHaveBeenCalled();
+      expect(scroll).not.toHaveBeenCalled();
+    } finally {
+      targetFocus.mockRestore();
+      editorFocus.mockRestore();
+      scroll.mockRestore();
+    }
+  });
+
+  test('new tasks append in discovery order even when the API prepends them and reverses existing tasks', async () => {
+    await renderLoaded();
+    const originalRows = rows();
+    const expected = [...titles];
+    for (const [id, title] of [
+      ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'New task one'],
+      ['00000000-0000-4000-8000-000000000000', 'New task two'],
+    ]) {
+      axios.post.mockImplementationOnce(async (url, data) => {
+        const created = { id, ...data, completed: false };
+        records.tasks = [created, ...records.tasks.slice().reverse()];
+        return { data: created };
+      });
+      type('Task title', title);
+      click('Add task');
+      await waitForSaved('Task created.');
+      expected.push(title);
+      expectOrder(expected);
+      originalRows.forEach((row, index) => expect(rows()[index]).toBe(row));
+      originalRows.push(rows()[originalRows.length]);
+    }
+    click('Refresh tasks');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh tasks' })).toBeEnabled());
+    expectOrder(expected);
+    expectSameRows(originalRows);
+  });
+
+  test('filtered views still remove toggled tasks and returning to All restores client order', async () => {
+    await renderLoaded();
+    reverseRefetches();
+    click('Active 2');
+    const survivor = screen.getByText('Write documentation').closest('li');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Mark task “Plan release” as completed' }));
+    await waitForSaved('Task marked as completed.');
+    expectOrder(['Write documentation']);
+    expect(rows()[0]).toBe(survivor);
+    click('Completed 2');
+    expectOrder(['Plan release', 'Review notes']);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Mark task “Plan release” as active' }));
+    await waitForSaved('Task marked as active.');
+    expectOrder(['Review notes']);
+    click('All 3');
+    expectOrder(titles);
+  });
+
+  test('deleting the final task focuses the list region rather than opening the editor', async () => {
+    records.tasks = records.tasks.slice(0, 1);
+    await renderLoaded();
+    const region = screen.getByRole('region', { name: 'Tasks list' });
+    const focus = jest.spyOn(region, 'focus');
+    try {
+      userEvent.click(screen.getByRole('button', { name: 'Delete task “Plan release”' }));
+      await waitForSaved('Task deleted.');
+      expect(screen.getByText('A little space to get things done')).toBeInTheDocument();
+      expect(region).toHaveFocus();
+      expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+      expect(screen.getByRole('textbox')).not.toHaveFocus();
+    } finally {
+      focus.mockRestore();
+    }
+  });
+});
 
 test('loads both collections and filters real data, including legacy task fields', async () => {
   await renderLoaded();
@@ -176,6 +331,117 @@ test('retains the last loaded list and counts after refresh failure', async () =
   expect(screen.getByText('Plan release')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'All 3' })).toBeInTheDocument();
   expect(screen.getByRole('alert')).toHaveTextContent('last loaded data');
+});
+
+test.each([
+  ['task', 'toggle'], ['task', 'delete'], ['category', 'toggle'], ['category', 'delete'],
+])('keeps %s controls visually stable and locked through a %s and its silent refetch', async (kind, operation) => {
+  records.categories.push({ id: 2, name: 'Personal', complete: false });
+  // Jest mocks CSS imports; load the actual styles to check mutation opacity rules.
+  const styles = document.createElement('style');
+  styles.textContent = ['index.css', 'App.css'].map((file) => readFileSync(`${__dirname}/${file}`, 'utf8')).join('\n');
+  document.head.appendChild(styles);
+  try {
+    await renderLoaded();
+    if (kind === 'category') click('Categories 2');
+    const resource = kind === 'task' ? 'tasks' : 'categories';
+    const title = kind === 'task' ? 'Plan release' : 'Product';
+    const otherTitle = kind === 'task' ? 'Write documentation' : 'Personal';
+    const row = screen.getByText(title).closest('li');
+    const otherRow = screen.getByText(otherTitle).closest('li');
+    const input = screen.getByRole('textbox');
+    userEvent.type(input, 'Keep this draft');
+    const summary = screen.getByText(`${records[resource].length} ${resource}`);
+    const originalSummary = summary.textContent;
+    const refresh = screen.getByRole('button', { name: `Refresh ${resource}` });
+    const method = operation === 'toggle' ? axios.patch : axios.delete;
+    let finishMutation;
+    let finishRefresh;
+    method.mockImplementationOnce(() => new Promise((resolve) => { finishMutation = resolve; }));
+    axios.get.mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve; }));
+    const control = operation === 'toggle'
+      ? within(row).getByRole('checkbox')
+      : within(row).getByRole('button', { name: `Delete ${kind} “${title}”` });
+    await act(async () => { fireEvent.click(control); });
+
+    const checkPending = async () => {
+      expect(screen.getByText(title).closest('li')).toBe(row);
+      expect(summary).toHaveTextContent(originalSummary);
+      expect(refresh).toHaveTextContent('Refresh');
+      expect(refresh.querySelector('.spin')).toBeNull();
+      expect(screen.queryByText('Refreshing…')).not.toBeInTheDocument();
+      expect(screen.queryByText('Saving changes…')).not.toBeInTheDocument();
+      expect(screen.queryByRole('status', { name: `Loading ${resource}` })).not.toBeInTheDocument();
+      expect(within(row).getByText(operation === 'toggle' ? 'Updating…' : 'Deleting…')).toBeInTheDocument();
+      expect(otherRow).toHaveAttribute('aria-busy', 'false');
+      expect(otherRow.querySelector('.spin')).toBeNull();
+      expect(input).toHaveAttribute('readonly');
+      for (const element of [row, otherRow, input, refresh, ...document.querySelectorAll('.record-row button, .record-checkbox, .editor button')]) {
+        expect(Number(getComputedStyle(element).opacity || 1)).toBe(1);
+      }
+      expect(getComputedStyle(row).animation).not.toContain('row-enter');
+      expect(getComputedStyle(row).transform).toMatch(/^(none)?$/);
+      for (const button of [refresh, ...document.querySelectorAll('.record-row button, .record-checkbox, .editor button')]) {
+        expect(button).toBeDisabled();
+      }
+      await act(async () => {
+        userEvent.click(control);
+        userEvent.click(within(otherRow).getByRole('checkbox'));
+        userEvent.click(within(otherRow).getByRole('button', { name: `Edit ${kind} “${otherTitle}”` }));
+        userEvent.click(within(otherRow).getByRole('button', { name: `Delete ${kind} “${otherTitle}”` }));
+        userEvent.click(refresh);
+        fireEvent.submit(screen.getByRole('form'));
+        userEvent.type(input, ' must not overwrite');
+      });
+      expect(input).toHaveValue('Keep this draft');
+      expect(axios.post).not.toHaveBeenCalled();
+      expect(axios.patch).toHaveBeenCalledTimes(operation === 'toggle' ? 1 : 0);
+      expect(axios.delete).toHaveBeenCalledTimes(operation === 'delete' ? 1 : 0);
+    };
+
+    await checkPending();
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    await act(async () => { finishMutation({ data: null }); });
+    await checkPending();
+    expect(axios.get).toHaveBeenCalledTimes(3);
+    const updated = operation === 'delete'
+      ? records[resource].filter((record) => record.id !== 0)
+      : records[resource].map((record) => record.id === 0 ? { ...record, [kind === 'task' ? 'completed' : 'complete']: true } : record);
+    await act(async () => { finishRefresh({ data: updated }); });
+    expect(input).not.toHaveAttribute('readonly');
+    expect(input).toHaveValue('Keep this draft');
+    expect(refresh).toBeEnabled();
+    expect(within(otherRow).getByRole('checkbox')).toBeEnabled();
+    if (operation === 'delete') expect(row).not.toBeInTheDocument();
+    else expect(within(row).getByRole('checkbox')).toBeChecked();
+  } finally {
+    styles.remove();
+  }
+});
+
+test.each(['task', 'category'])('reports a failed silent %s refetch and keeps explicit retry feedback', async (kind) => {
+  await renderLoaded();
+  if (kind === 'category') click('Categories 1');
+  const resource = kind === 'task' ? 'tasks' : 'categories';
+  const title = kind === 'task' ? 'Plan release' : 'Product';
+  const row = screen.getByText(title).closest('li');
+  axios.get.mockRejectedValueOnce(new Error('Offline'));
+  fireEvent.click(within(row).getByRole('checkbox'));
+  await waitForSaved(`${kind === 'task' ? 'Task' : 'Category'} marked as completed.`);
+  expect(screen.getByRole('alert')).toHaveTextContent(`Could not refresh ${resource}.`);
+  expect(screen.getByRole('alert')).toHaveTextContent('last loaded data');
+  expect(screen.getByText(title).closest('li')).toBe(row);
+  expect(within(row).getByRole('checkbox')).not.toBeChecked();
+
+  let finishRetry;
+  axios.get.mockImplementationOnce(() => new Promise((resolve) => { finishRetry = resolve; }));
+  click('Retry');
+  expect(screen.getByText('Refreshing…')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: `Refresh ${resource}` })).toHaveTextContent('Loading');
+  expect(screen.getByText(title).closest('li')).toBe(row);
+  await act(async () => { finishRetry({ data: records[resource] }); });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(within(row).getByRole('checkbox')).toBeChecked();
 });
 
 test('offers useful empty states and keyboard form submission', async () => {
@@ -304,7 +570,7 @@ test('keeps input focus during a pending keyboard save and restores it without s
   focus.mockRestore();
 });
 
-test.each(['task', 'category'])('focuses the %s editor without centering it on edit or cancel', async (kind) => {
+test.each(['task', 'category'])('focuses the %s editor without scrolling on edit or cancel', async (kind) => {
   await renderLoaded();
   if (kind === 'category') click('Categories 1');
   const input = screen.getByRole('textbox');
@@ -314,11 +580,11 @@ test.each(['task', 'category'])('focuses the %s editor without centering it on e
   expect(screen.getByRole('textbox')).toBe(input);
   expect(input).toHaveFocus();
   expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
-  expect(input.scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+  expect(input.scrollIntoView).not.toHaveBeenCalled();
   click('Cancel');
   expect(screen.getByRole('textbox')).toBe(input);
   expect(input).toHaveFocus();
-  expect(input.scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+  expect(input.scrollIntoView).not.toHaveBeenCalled();
   expect(axios.get).toHaveBeenCalledTimes(2);
   focus.mockRestore();
 });
@@ -452,7 +718,7 @@ test('keeps a pending deletion in place and restores its controls after a failur
   expect(deleteButton).toHaveFocus();
 });
 
-test.each([false, true])('only animates filter/view changes, respects reduced motion (%s), and keeps the editor mounted', async (reducedMotion) => {
+test.each([false, true])('keeps typing, filters and views free of list fades (reduced motion: %s)', async (reducedMotion) => {
   const originalAnimate = Element.prototype.animate;
   const originalMatchMedia = window.matchMedia;
   const cancel = jest.fn();
@@ -461,18 +727,17 @@ test.each([false, true])('only animates filter/view changes, respects reduced mo
   window.matchMedia = jest.fn(() => ({ matches: reducedMotion }));
   try {
     await renderLoaded();
-    animate.mockClear();
     const input = screen.getByRole('textbox');
     userEvent.type(input, 'A motion-free draft');
     click('Edit task “Plan release”');
     userEvent.type(input, ' revised', { skipClick: true });
     expect(animate).not.toHaveBeenCalled();
     click('Active 2');
-    expect(animate).toHaveBeenCalledTimes(reducedMotion ? 0 : 1);
+    expect(animate).not.toHaveBeenCalled();
     expect(screen.getByRole('textbox')).toBe(input);
     expect(input).toHaveValue('Plan release revised');
     click('Categories 1');
-    expect(animate).toHaveBeenCalledTimes(reducedMotion ? 0 : 2);
+    expect(animate).not.toHaveBeenCalled();
     expect(screen.getByRole('textbox')).toBe(input);
   } finally {
     if (originalAnimate) Element.prototype.animate = originalAnimate; else delete Element.prototype.animate;

@@ -7,6 +7,19 @@ const getTaskTitle = (task) => task.title ?? task.text ?? '';
 const getTaskCompleted = (task) => Boolean(task.completed ?? task.is_done ?? false);
 const getCategoryName = (category) => category.name ?? category.title ?? '';
 
+function preserveCollectionOrder(previous, incoming) {
+  const remaining = new Map(incoming.map((item) => [item.id, item]));
+  const ordered = [];
+  for (const item of previous) {
+    if (remaining.has(item.id)) {
+      ordered.push(remaining.get(item.id));
+      remaining.delete(item.id);
+    }
+  }
+  // Keep surviving IDs in client order, using fresh data; append newly seen IDs.
+  return [...ordered, ...remaining.values()];
+}
+
 function getErrorText(error) {
   const detail = error.response?.data?.detail;
   if (typeof detail === 'string') return detail;
@@ -27,6 +40,8 @@ function Icon({ name, className = '' }) {
     alert: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 3h.01" /></>,
     workspace: <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 10h18M9 10v10" /></>,
     inbox: <><path d="m3 13 3-9h12l3 9v7H3z" /><path d="M3 13h5l2 3h4l2-3h5" /></>,
+    sparkle: <><path d="m12 2 2.7 7.3L22 12l-7.3 2.7L12 22l-2.7-7.3L2 12l7.3-2.7z" /></>,
+    sunshine: <><circle cx="12" cy="12" r="6" /><path d="M12 1v2m0 18v2M1 12h2m18 0h2M4 4l1.5 1.5m13 13L20 20M4 20l1.5-1.5m13-13L20 4M9 11h.01M15 11h.01m-6 3q3 3 6 0" /></>,
   };
   return <svg className={`icon ${className}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -42,14 +57,15 @@ function useCollection(resource) {
   const requestId = useRef(0);
   const mutationLock = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     const id = ++requestId.current;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError('');
     try {
       const response = await axios.get(`${API_BASE_URL}/${resource}`);
       if (id !== requestId.current) return;
-      setItems(Array.isArray(response.data) ? response.data : []);
+      const incoming = Array.isArray(response.data) ? response.data : [];
+      setItems((previous) => preserveCollectionOrder(previous, incoming));
       setHasLoaded(true);
     } catch (requestError) {
       if (id === requestId.current) setError(getErrorText(requestError));
@@ -74,7 +90,7 @@ function useCollection(resource) {
     try {
       await operation();
       setNotice({ kind: 'success', text: message });
-      await load();
+      await load({ silent: true });
       return true;
     } catch (requestError) {
       setNotice({ kind: 'error', text: getErrorText(requestError) });
@@ -112,7 +128,7 @@ function Feedback({ collection, label, onDismiss }) {
         <p className="notice-detail">{collection.error}</p>
         {collection.hasLoaded && <p className="notice-detail">The list and counts show the last loaded data.</p>}
       </div>
-      <button className="btn btn-quiet" type="button" onClick={collection.load} disabled={collection.loading || Boolean(collection.pending)}>Retry</button>
+      <button className="btn btn-quiet" type="button" onClick={collection.load} disabled={collection.loading || Boolean(collection.pending)} data-mutation-locked={Boolean(collection.pending) && !collection.loading}>Retry</button>
     </div>}
     {collection.notice && <div className={`notice ${collection.notice.kind === 'error' ? 'notice-error' : ''}`} role={collection.notice.kind === 'error' ? 'alert' : 'status'}>
       <Icon name={collection.notice.kind === 'error' ? 'alert' : 'check'} />
@@ -138,7 +154,7 @@ function EmptyState({ icon, title, description, action, onAction }) {
 }
 
 function RecordRow({ title, completed, editing, pending, operation, onToggle, onEdit, onDelete, kind }) {
-  return <li className={`record-row${editing ? ' is-editing' : ''}${operation === 'delete' ? ' is-removing' : ''}`} aria-busy={Boolean(operation)}>
+  return <li className={`record-row${completed ? ' is-complete' : ''}${editing ? ' is-editing' : ''}`} aria-busy={Boolean(operation)}>
     <label className="record-check-control">
       <input className="record-checkbox" type="checkbox" checked={completed} onChange={onToggle} disabled={pending} aria-label={`Mark ${kind} “${title}” as ${completed ? 'active' : 'completed'}`} />
     </label>
@@ -169,7 +185,6 @@ function App() {
   const inputRef = useRef(null);
   const focusAfterRender = useRef(null);
   const creationDrafts = useRef({ tasks: '', categories: '' });
-  const listRef = useRef(null);
   const isTasks = activeView === 'tasks';
   const collection = isTasks ? tasks : categories;
   const editing = isTasks ? editingTask : editingCategory;
@@ -183,20 +198,13 @@ function App() {
   const draft = isTasks ? taskTitle : categoryName;
   const dirty = editing && (draft.trim() !== (isTasks ? editing.title : editing.name) || (isTasks && isCompleted !== editing.completed));
 
-  // Animate a local view change without changing React keys or remounting the editor.
-  useEffect(() => {
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-    const animation = listRef.current?.animate?.([{ opacity: 0.65 }, { opacity: 1 }], { duration: 160, easing: 'ease-out' });
-    return () => animation?.cancel();
-  }, [activeView, filter]);
-
   useEffect(() => {
     const request = focusAfterRender.current;
     if (!request) return;
     if (request.view !== activeView) {
       focusAfterRender.current = null;
     } else if (!busy) {
-      const target = request.target?.isConnected ? request.target : inputRef.current;
+      const target = [request.target, ...request.fallbackTargets, inputRef.current].find((element) => element?.isConnected);
       // Restoring keyboard focus must not also reposition the page.
       // A completed request must not steal focus after the user moves elsewhere.
       if (!request.origin || document.activeElement === request.origin || document.activeElement === document.body) {
@@ -206,13 +214,12 @@ function App() {
     }
   });
 
-  const restoreFocus = (target = null, origin = null) => {
-    focusAfterRender.current = { view: activeView, target, origin };
+  const restoreFocus = (target = null, origin = null, fallbackTargets = []) => {
+    focusAfterRender.current = { view: activeView, target, origin, fallbackTargets };
   };
 
   const focusEditor = () => {
     inputRef.current?.focus({ preventScroll: true });
-    inputRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
   };
 
   const resetTask = () => { setTaskTitle(editingTask ? creationDrafts.current.tasks : ''); setIsCompleted(false); setEditingTask(null); creationDrafts.current.tasks = ''; };
@@ -298,11 +305,18 @@ function App() {
 
   const deleteRecord = async (record, control) => {
     const origin = document.activeElement;
+    const row = control?.closest('.record-row');
+    const nextControl = row?.nextElementSibling?.querySelector('.danger');
+    const previousControl = row?.previousElementSibling?.querySelector('.danger');
+    const listSection = row?.closest('.list-section');
     const success = await collection.mutate(`delete-${record.id}`, () => axios.delete(`${API_BASE_URL}/${activeView}/${record.id}`), `${isTasks ? 'Task' : 'Category'} deleted.`);
     if (success) {
       if (editing?.id === record.id) { if (isTasks) resetTask(); else resetCategory(); }
     }
-    restoreFocus(success ? null : control, origin);
+    // Keep focus near the deletion without opening the editor's on-screen keyboard.
+    // Resolve connected candidates after React commits the refreshed list. A failed
+    // refetch can leave the original row present, in which case it keeps focus.
+    restoreFocus(control, origin, success ? [nextControl, previousControl, listSection] : []);
   };
 
   const count = (value, source = tasks) => source.hasLoaded ? value : '—';
@@ -315,23 +329,21 @@ function App() {
 
   return <div className="app-shell">
     <a href="#main-content" className="skip-link">Skip to content</a>
-    <aside className="sidebar">
-      <div className="brand"><span className="brand-mark"><Icon name="check" /></span>Taskspace</div>
-      <div className="nav-caption">Workspace</div>
+    <header className="app-header">
+      <div className="brand"><Icon name="sparkle" className="brand-sparkle" /><span>ToDo App</span><Icon name="sunshine" className="brand-sunshine" /></div>
+      <p className="tagline">Little tasks. Lovely progress.</p>
       <nav className="navigation" aria-label="Main navigation">
         {['tasks', 'categories'].map((view) => <button key={view} type="button" className={`nav-item${activeView === view ? ' active' : ''}`} aria-current={activeView === view ? 'page' : undefined} onClick={() => setActiveView(view)}>
           <Icon name={view} /><span>{view === 'tasks' ? 'Tasks' : 'Categories'}</span>
           <span className="nav-count">{view === 'tasks' ? count(tasks.items.length) : count(categories.items.length, categories)}</span>
         </button>)}
       </nav>
-      <div className="sidebar-footer"><span className="workspace-icon"><Icon name="workspace" /></span><div><strong>Personal workspace</strong><small>A place for your next step</small></div></div>
-    </aside>
+    </header>
     <div className="main-shell">
-      <header className="topbar"><Icon name="workspace" /><span>Workspace</span><span className="breadcrumb-divider">/</span><span className="breadcrumb-current">{label}</span></header>
       <main id="main-content" className="main-content" tabIndex="-1">
         <div className="page-heading">
-          <div><h1>{label}</h1><p className="page-description">{isTasks ? 'Make room for focused work. One task at a time.' : 'A simple overview of your categories.'}</p></div>
-          <button type="button" className="btn" onClick={collection.load} disabled={collection.loading || busy} aria-label={`Refresh ${activeView}`}><Icon name="refresh" className={collection.loading ? 'spin' : ''} /><span>{collection.loading ? 'Loading' : 'Refresh'}</span></button>
+          <div><h1>{label}</h1><p className="page-description">{isTasks ? 'A little focus, a little more done.' : 'A happy home for your ideas.'}</p></div>
+          <button type="button" className="btn" onClick={collection.load} disabled={collection.loading || busy} data-mutation-locked={busy && !collection.loading} aria-label={`Refresh ${activeView}`}><Icon name="refresh" className={collection.loading ? 'spin' : ''} /><span>{collection.loading ? 'Loading' : 'Refresh'}</span></button>
         </div>
         <Feedback collection={collection} label={activeView} onDismiss={(event) => {
           collection.setNotice(null);
@@ -342,8 +354,8 @@ function App() {
           <div className="input-row">
             <label className="sr-only" htmlFor="record-name">{isTasks ? 'Task title' : 'Category name'}</label>
             <input ref={inputRef} id="record-name" className="text-input" value={draft} onChange={(event) => isTasks ? setTaskTitle(event.target.value) : setCategoryName(event.target.value)} placeholder={isTasks ? 'What needs to get done?' : 'Name your category'} aria-describedby="editor-help" autoComplete="off" readOnly={busy} required />
-            <button type="submit" className="btn btn-primary" disabled={busy || !(isTasks ? taskTitle : categoryName).trim()}><Icon name={collection.pending === 'save' ? 'refresh' : editing ? 'check' : 'plus'} className={collection.pending === 'save' ? 'spin' : ''} />{collection.pending === 'save' ? 'Saving…' : editing ? 'Save changes' : `Add ${singular}`}</button>
-            <button className="btn editor-cancel" type="button" disabled={busy || (!editing && !draft)} onClick={cancelEditing}>{editing ? 'Cancel' : 'Clear'}</button>
+            <button type="submit" className="btn btn-primary" disabled={busy || !draft.trim()} data-mutation-locked={busy && Boolean(draft.trim())}><Icon name={collection.pending === 'save' ? 'refresh' : editing ? 'check' : 'plus'} className={collection.pending === 'save' ? 'spin' : ''} />{collection.pending === 'save' ? 'Saving…' : editing ? 'Save changes' : `Add ${singular}`}</button>
+            <button className="btn editor-cancel" type="button" disabled={busy || (!editing && !draft)} data-mutation-locked={busy && Boolean(editing || draft)} onClick={cancelEditing}>{editing ? 'Cancel' : 'Clear'}</button>
           </div>
           <div className="editor-options">
             {isTasks && editingTask ? <label className="checkbox-label"><input type="checkbox" checked={isCompleted} onChange={(event) => setIsCompleted(event.target.checked)} disabled={busy} />Mark as completed</label> : <span className="editor-state">{editing ? dirty ? 'Unsaved changes' : 'No changes yet' : 'Only saved items appear in the list.'}</span>}
@@ -351,13 +363,13 @@ function App() {
           </div>
           <span id="editor-help" className="sr-only">{editing ? 'Enter to save changes. Escape to cancel editing.' : 'Enter to add. Your draft is kept when switching views.'}</span>
         </form>
-        <section className="list-section" aria-label={`${label} list`}>
+        <section className="list-section" aria-label={`${label} list`} tabIndex="-1">
           <div className="list-toolbar">
             {isTasks ? <div className="filters" role="group" aria-label="Filter tasks">{[['all', 'All', tasks.items.length], ['active', 'Active', activeCount], ['completed', 'Completed', completedCount]].map(([value, text, total]) => <button type="button" key={value} className={`filter${filter === value ? ' active' : ''}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>{text}<span className="filter-count">{count(total)}</span></button>)}</div> : <h2 className="list-label">All categories <span className="filter-count">{count(categories.items.length, categories)}</span></h2>}
-            <span className="list-summary" role="status">{collection.loading ? collection.hasLoaded ? 'Refreshing…' : 'Loading…' : collection.pending ? 'Saving changes…' : collection.hasLoaded ? `${visibleItems.length} ${isTasks ? (visibleItems.length === 1 ? 'task' : 'tasks') : (visibleItems.length === 1 ? 'category' : 'categories')}` : 'Unavailable'}</span>
+            <span className="list-summary" role="status">{collection.loading ? collection.hasLoaded ? 'Refreshing…' : 'Loading…' : collection.hasLoaded ? `${visibleItems.length} ${isTasks ? (visibleItems.length === 1 ? 'task' : 'tasks') : (visibleItems.length === 1 ? 'category' : 'categories')}` : 'Unavailable'}</span>
           </div>
-          <div ref={listRef} className="list-frame" aria-busy={collection.loading || busy}>
-            <div className="list-columns" aria-hidden="true"><span>{isTasks ? 'TASK' : 'CATEGORY'}</span><span>STATUS / ACTIONS</span></div>
+          <div className="list-frame" aria-busy={collection.loading || busy}>
+            <div className="list-columns" aria-hidden="true"><span><Icon name="check" />{isTasks ? 'Your little checklist' : 'Everything in its place'}</span><span>One thing at a time <Icon name="sparkle" /></span></div>
             {!collection.hasLoaded && collection.loading ? (
               <LoadingRows label={activeView} />
             ) : !collection.hasLoaded && collection.error ? (
