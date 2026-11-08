@@ -1,8 +1,6 @@
 """Exercise the complete ASGI request stack without a network or a database server."""
 import asyncio
 import json
-from unittest.mock import MagicMock
-from uuid import uuid4
 
 import pytest
 from sqlalchemy.orm import Session
@@ -43,31 +41,25 @@ def request(method, path, payload=None, headers=()):
 
 
 @pytest.fixture
-def database_stub():
-    # Simulate storage only; production routers, services, repositories and schemas run.
-    rows = {}
-    db = MagicMock(spec=Session)
+def isolated_database(database_engine):
+    def override_db():
+        with Session(database_engine) as db:
+            yield db
 
-    def add(row):
-        row.id = str(uuid4())
-        rows[row.id] = row
-
-    db.add.side_effect = add
-    db.get.side_effect = lambda model, key: rows.get(key)
-    db.scalars.return_value.all.side_effect = lambda: list(rows.values())
-    db.delete.side_effect = lambda row: rows.pop(row.id)
-    app.dependency_overrides[get_db] = lambda: db
+    previous_overrides = app.dependency_overrides.copy()
+    app.dependency_overrides[get_db] = override_db
     try:
-        yield db
+        yield
     finally:
-        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
 
 
 @pytest.mark.parametrize('path,text_field,flag,missing', [
     ('/tasks', 'title', 'completed', 'Task not found'),
     ('/categories', 'name', 'complete', 'Category not found'),
 ])
-def test_crud_http_contract(database_stub, path, text_field, flag, missing):
+def test_crud_http_contract(isolated_database, path, text_field, flag, missing):
     assert request('GET', path)[:2] == (200, [])
     assert request('POST', path, {})[0] == 422
     status, created, _ = request('POST', path, {text_field: 'First'})
@@ -75,13 +67,16 @@ def test_crud_http_contract(database_stub, path, text_field, flag, missing):
     assert created == {'id': created['id'], text_field: 'First', flag: False}
     resource = f"{path}/{created['id']}"
     assert request('GET', path)[:2] == (200, [created])
+    assert request('GET', path)[:2] == (200, [created])
     for value in (True, False):
         status, updated, _ = request('PATCH', resource, {flag: value})
         assert status == 200
         assert updated == {**created, flag: value}
+        assert request('GET', path)[:2] == (200, [updated])
     status, updated, _ = request('PATCH', resource, {text_field: 'Renamed'})
     assert status == 200
     assert updated == {**created, text_field: 'Renamed'}
+    assert request('GET', path)[:2] == (200, [updated])
     for payload in ({}, {text_field: None, flag: None}):
         assert request('PATCH', resource, payload)[:2] == (200, updated)
     assert request('PATCH', resource, {flag: 'invalid'})[0] == 422
