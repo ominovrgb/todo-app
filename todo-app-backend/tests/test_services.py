@@ -208,7 +208,7 @@ def test_failed_commit_preserves_storage_and_cache_and_session_recovers(resource
     assert listed(resource) == expected
 
 
-def test_category_delete_invalidates_both_lists_without_deleting_tasks(database_engine):
+def test_category_delete_invalidates_categories_and_preserves_tasks_and_their_cache(database_engine):
     with Session(database_engine) as db:
         tasks, categories = TaskService(db), CategoryService(db)
         task = tasks.create_task(TaskCreateSchema(title='Keep'))
@@ -219,7 +219,7 @@ def test_category_delete_invalidates_both_lists_without_deleting_tasks(database_
         categories.delete_category(category.id)
 
         settings = get_settings()
-        assert categories.cache.get(settings.cache_tasks_key) is None
+        assert categories.cache.get(settings.cache_tasks_key) == [task.model_dump()]
         assert categories.cache.get(settings.cache_category_key) is None
         assert tasks.list_tasks() == [task]
         assert categories.list_categories() == []

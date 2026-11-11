@@ -1,0 +1,4 @@
+# Optional browser smoke test only; not part of the backend runtime image.
+playwright==1.65.0
+# Playwright's runtime dependency; not needed by the synchronous backend.
+greenlet==3.5.6

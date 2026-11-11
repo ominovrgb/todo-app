@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 
 class CategorySchema(BaseModel):
@@ -10,9 +12,9 @@ class CategorySchema(BaseModel):
 
 
 class CategoryCreateSchema(BaseModel):
-    name: str
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class CategoryUpdateSchema(BaseModel):
-    name: str | None = None
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] | None = None
     complete: bool | None = None

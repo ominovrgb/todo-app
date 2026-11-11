@@ -1,0 +1,10 @@
+# Send only build inputs. Exclude local secrets, virtualenvs, tests, and caches.
+**
+!requirements.txt
+!app/
+!app/**
+!docker/
+!docker/*.py
+**/__pycache__/
+**/*.pyc
+**/.env*

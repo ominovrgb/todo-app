@@ -62,6 +62,9 @@ def isolated_database(database_engine):
 def test_crud_http_contract(isolated_database, path, text_field, flag, missing):
     assert request('GET', path)[:2] == (200, [])
     assert request('POST', path, {})[0] == 422
+    for value in ('', '   ', '\t\n'):
+        assert request('POST', path, {text_field: value})[0] == 422
+    assert request('GET', path)[:2] == (200, [])
     status, created, _ = request('POST', path, {text_field: 'First'})
     assert status == 201
     assert created == {'id': created['id'], text_field: 'First', flag: False}
@@ -80,6 +83,9 @@ def test_crud_http_contract(isolated_database, path, text_field, flag, missing):
     for payload in ({}, {text_field: None, flag: None}):
         assert request('PATCH', resource, payload)[:2] == (200, updated)
     assert request('PATCH', resource, {flag: 'invalid'})[0] == 422
+    for value in ('', '   ', '\t\n'):
+        assert request('PATCH', resource, {text_field: value})[0] == 422
+    assert request('GET', path)[:2] == (200, [updated])
     assert request('DELETE', resource)[:2] == (204, None)
     assert request('GET', path)[:2] == (200, [])
     assert request('PATCH', resource, {flag: True})[:2] == (404, {'detail': missing})

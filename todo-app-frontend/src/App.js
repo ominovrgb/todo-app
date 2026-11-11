@@ -1,142 +1,14 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import axios from 'axios';
+import React, { useEffect, useRef, useState } from 'react';
+import * as api from './api';
+import Feedback from './components/Feedback';
+import Icon from './components/Icon';
+import RecordRow from './components/RecordRow';
+import useCollection from './hooks/useCollection';
 import './App.css';
 
-const API_BASE_URL = 'http://localhost:8080';
 const getTaskTitle = (task) => task.title ?? task.text ?? '';
 const getTaskCompleted = (task) => Boolean(task.completed ?? task.is_done ?? false);
 const getCategoryName = (category) => category.name ?? category.title ?? '';
-
-function preserveCollectionOrder(previous, incoming) {
-  const remaining = new Map(incoming.map((item) => [item.id, item]));
-  const ordered = [];
-  for (const item of previous) {
-    if (remaining.has(item.id)) {
-      ordered.push(remaining.get(item.id));
-      remaining.delete(item.id);
-    }
-  }
-  // Keep surviving IDs in client order, using fresh data; append newly seen IDs.
-  return [...ordered, ...remaining.values()];
-}
-
-function getErrorText(error) {
-  const detail = error.response?.data?.detail;
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) return detail.map((item) => item?.msg ?? String(item)).join(', ');
-  return error.response ? 'The request could not be completed. Please try again.' : 'Unable to reach the server. Check your connection and try again.';
-}
-
-function Icon({ name, className = '' }) {
-  const paths = {
-    tasks: <><rect x="4" y="3" width="16" height="18" rx="3" /><path d="m8 9 1 1 2-2m3 1h3m-9 6 1 1 2-2m3 1h3" /></>,
-    categories: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
-    plus: <path d="M12 5v14M5 12h14" />,
-    check: <path d="m5 12 4 4L19 6" />,
-    edit: <><path d="m14 5 5 5M4 20l5-1L20 8a2.1 2.1 0 0 0-5-5L4 14z" /></>,
-    trash: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7" /></>,
-    refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6 6a8 8 0 0 1 13 2l1 4M4 12l1 4a8 8 0 0 0 13 2" /></>,
-    close: <path d="m6 6 12 12M6 18 18 6" />,
-    alert: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 3h.01" /></>,
-    workspace: <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 10h18M9 10v10" /></>,
-    inbox: <><path d="m3 13 3-9h12l3 9v7H3z" /><path d="M3 13h5l2 3h4l2-3h5" /></>,
-    sparkle: <><path d="m12 2 2.7 7.3L22 12l-7.3 2.7L12 22l-2.7-7.3L2 12l7.3-2.7z" /></>,
-    sunshine: <><circle cx="12" cy="12" r="6" /><path d="M12 1v2m0 18v2M1 12h2m18 0h2M4 4l1.5 1.5m13 13L20 20M4 20l1.5-1.5m13-13L20 4M9 11h.01M15 11h.01m-6 3q3 3 6 0" /></>,
-  };
-  return <svg className={`icon ${className}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
-}
-
-// Each collection retains its own loading, mutation and feedback state across navigation.
-function useCollection(resource) {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [hasLoaded, setHasLoaded] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState(null);
-  const [pending, setPending] = useState('');
-  const requestId = useRef(0);
-  const mutationLock = useRef(false);
-
-  const load = useCallback(async ({ silent = false } = {}) => {
-    const id = ++requestId.current;
-    if (!silent) setLoading(true);
-    setError('');
-    try {
-      const response = await axios.get(`${API_BASE_URL}/${resource}`);
-      if (id !== requestId.current) return;
-      const incoming = Array.isArray(response.data) ? response.data : [];
-      setItems((previous) => preserveCollectionOrder(previous, incoming));
-      setHasLoaded(true);
-    } catch (requestError) {
-      if (id === requestId.current) setError(getErrorText(requestError));
-    } finally {
-      if (id === requestId.current) setLoading(false);
-    }
-  }, [resource]);
-
-  useEffect(() => {
-    load();
-    return () => { requestId.current += 1; };
-  }, [load]);
-
-  const mutate = async (key, operation, message) => {
-    if (mutationLock.current) return false;
-    mutationLock.current = true;
-    setPending(key);
-    setNotice(null);
-    // Ignore an older refresh that could replace data during this mutation.
-    requestId.current += 1;
-    setLoading(false);
-    try {
-      await operation();
-      setNotice({ kind: 'success', text: message });
-      await load({ silent: true });
-      return true;
-    } catch (requestError) {
-      setNotice({ kind: 'error', text: getErrorText(requestError) });
-      return false;
-    } finally {
-      mutationLock.current = false;
-      setPending('');
-    }
-  };
-
-  return { items, loading, hasLoaded, error, notice, pending, load, mutate, setNotice };
-}
-
-function Feedback({ collection, label, onDismiss }) {
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const { notice, setNotice } = collection;
-
-  useEffect(() => {
-    if (!notice) {
-      setHovered(false);
-      setFocused(false);
-      return;
-    }
-    if (notice?.kind !== 'success' || hovered || focused) return;
-    const timer = setTimeout(() => setNotice((current) => current === notice ? null : current), 5000);
-    return () => clearTimeout(timer);
-  }, [notice, setNotice, hovered, focused]);
-
-  return <div className="feedback-region" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onFocusCapture={() => setFocused(true)} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
-    {collection.error && <div className="notice notice-error" role="alert">
-      <Icon name="alert" />
-      <div className="notice-copy">
-        <p>Could not {collection.hasLoaded ? 'refresh' : 'load'} {label}.</p>
-        <p className="notice-detail">{collection.error}</p>
-        {collection.hasLoaded && <p className="notice-detail">The list and counts show the last loaded data.</p>}
-      </div>
-      <button className="btn btn-quiet" type="button" onClick={collection.load} disabled={collection.loading || Boolean(collection.pending)} data-mutation-locked={Boolean(collection.pending) && !collection.loading}>Retry</button>
-    </div>}
-    {collection.notice && <div className={`notice ${collection.notice.kind === 'error' ? 'notice-error' : ''}`} role={collection.notice.kind === 'error' ? 'alert' : 'status'}>
-      <Icon name={collection.notice.kind === 'error' ? 'alert' : 'check'} />
-      <div className="notice-copy">{collection.notice.text}</div>
-      <button className="icon-button" type="button" aria-label="Dismiss notification" onClick={onDismiss}><Icon name="close" /></button>
-    </div>}
-  </div>;
-}
 
 function LoadingRows({ label }) {
   return <div role="status" aria-label={`Loading ${label}`}>
@@ -151,25 +23,6 @@ function EmptyState({ icon, title, description, action, onAction }) {
     <h3>{title}</h3><p>{description}</p>
     {action && <button type="button" className="btn" onClick={onAction}>{action}</button>}
   </div>;
-}
-
-function RecordRow({ title, completed, editing, pending, operation, onToggle, onEdit, onDelete, kind }) {
-  return <li className={`record-row${completed ? ' is-complete' : ''}${editing ? ' is-editing' : ''}`} aria-busy={Boolean(operation)}>
-    <label className="record-check-control">
-      <input className="record-checkbox" type="checkbox" checked={completed} onChange={onToggle} disabled={pending} aria-label={`Mark ${kind} “${title}” as ${completed ? 'active' : 'completed'}`} />
-    </label>
-    <div className="record-content">
-      <span className={`record-title${completed ? ' done' : ''}`}>{title}</span>
-    </div>
-    <span className={`record-status${editing ? ' editing' : completed ? ' complete' : ''}`}>
-      {operation ? <Icon name="refresh" className="spin" /> : <span className="status-dot" />}
-      {operation ? operation === 'delete' ? 'Deleting…' : 'Updating…' : editing ? 'Editing' : completed ? 'Completed' : 'Active'}
-    </span>
-    <div className="record-actions">
-      <button className="icon-button edit-button" type="button" disabled={pending} onClick={onEdit} aria-label={`Edit ${kind} “${title}”`} aria-pressed={editing} title={editing ? 'Return to editor' : 'Edit'}><Icon name="edit" /><span>{editing ? 'Editing' : 'Edit'}</span></button>
-      <button className="icon-button danger" type="button" disabled={pending} onClick={onDelete} aria-label={`Delete ${kind} “${title}”`} title="Delete"><Icon name="trash" /></button>
-    </div>
-  </li>;
 }
 
 function App() {
@@ -263,8 +116,8 @@ function App() {
       }
     }
     const success = await collection.mutate('save', () => editing
-      ? axios.patch(`${API_BASE_URL}/${activeView}/${editing.id}`, patch)
-      : axios.post(`${API_BASE_URL}/${activeView}`, isTasks ? { title: value } : { name: value }),
+      ? api.updateRecord(activeView, editing.id, patch)
+      : api.createRecord(activeView, isTasks ? { title: value } : { name: value }),
     `${isTasks ? 'Task' : 'Category'} ${editing ? 'updated' : 'created'}.`);
     if (success) {
       if (isTasks) resetTask(); else resetCategory();
@@ -295,7 +148,7 @@ function App() {
   const toggleRecord = async (record, control) => {
     const origin = document.activeElement;
     const completed = isTasks ? getTaskCompleted(record) : Boolean(record.complete);
-    const success = await collection.mutate(`toggle-${record.id}`, () => axios.patch(`${API_BASE_URL}/${activeView}/${record.id}`, isTasks ? { completed: !completed } : { complete: !completed }), `${isTasks ? 'Task' : 'Category'} marked as ${completed ? 'active' : 'completed'}.`);
+    const success = await collection.mutate(`toggle-${record.id}`, () => api.updateRecord(activeView, record.id, isTasks ? { completed: !completed } : { complete: !completed }), `${isTasks ? 'Task' : 'Category'} marked as ${completed ? 'active' : 'completed'}.`);
     if (success && isTasks && editingTask?.id === record.id) {
       setIsCompleted(!completed);
       setEditingTask((previous) => previous ? { ...previous, completed: !completed } : previous);
@@ -309,7 +162,7 @@ function App() {
     const nextControl = row?.nextElementSibling?.querySelector('.danger');
     const previousControl = row?.previousElementSibling?.querySelector('.danger');
     const listSection = row?.closest('.list-section');
-    const success = await collection.mutate(`delete-${record.id}`, () => axios.delete(`${API_BASE_URL}/${activeView}/${record.id}`), `${isTasks ? 'Task' : 'Category'} deleted.`);
+    const success = await collection.mutate(`delete-${record.id}`, () => api.deleteRecord(activeView, record.id), `${isTasks ? 'Task' : 'Category'} deleted.`);
     if (success) {
       if (editing?.id === record.id) { if (isTasks) resetTask(); else resetCategory(); }
     }

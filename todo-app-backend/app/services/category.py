@@ -68,15 +68,14 @@ class CategoryService:
         return CategorySchema.model_validate(category)
 
     def delete_category(self, category_id: str) -> None:
-        task = self.category_repository.get_by_id(category_id)
-        if task is None:
+        category = self.category_repository.get_by_id(category_id)
+        if category is None:
             raise CategoryNotFound()
 
-        self.category_repository.delete(task)
+        self.category_repository.delete(category)
         try:
             self.db.commit()
         except SQLAlchemyError:
             self.db.rollback()
             raise
         self.cache.delete(settings.cache_category_key)
-        self.cache.delete(settings.cache_tasks_key)

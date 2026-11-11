@@ -1,0 +1,11 @@
+# Allow only frontend build inputs; never send local env files or node_modules.
+**
+!package.json
+!package-lock.json
+!public/
+!public/**
+!src/
+!src/**
+!docker/
+!docker/nginx.conf
+**/.env*

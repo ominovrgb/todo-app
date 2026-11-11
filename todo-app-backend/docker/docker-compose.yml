@@ -1,0 +1,97 @@
+# Use the same permanent project from either Compose entry point.
+name: todo-app
+
+x-app: &app
+  image: todo-app-backend:local
+  environment:
+    POSTGRES_USER: ${POSTGRES_USER:-todo}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in a separate Compose env file}
+    POSTGRES_DB: ${POSTGRES_DB:-todo}
+    REDIS_URL: redis://redis:6379/0
+    CORS_ALLOWED_ORIGINS: '${CORS_ALLOWED_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'
+
+services:
+  frontend:
+    image: todo-app-frontend:local
+    build:
+      context: ../../todo-app-frontend
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-18000}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ && wget -q -O /dev/null http://127.0.0.1:8080/api/openapi.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    <<: *app
+    # Build once; db-init uses this same image.
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-18080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "docker.entrypoint", "python", "-m", "docker.healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Explicit bootstrap for this stack's database. Normal FastAPI startup stays DDL-free.
+  db-init:
+    <<: *app
+    # The backend build produces this local image; do not pull it from a registry.
+    pull_policy: never
+    command: ["python", "-m", "docker.init_db"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-todo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in a separate Compose env file}
+      POSTGRES_DB: ${POSTGRES_DB:-todo}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # Cache is disposable; don't create an anonymous volume from the image's /data.
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+# Both the network and volume are scoped by the Compose project name.
+volumes:
+  postgres_data:

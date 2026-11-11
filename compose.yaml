@@ -1,0 +1,7 @@
+# Permanent project; configure credentials and ports in the root .env.
+name: todo-app
+
+include:
+  - path: todo-app-backend/docker/docker-compose.yml
+    # Load documented defaults, not backend development credentials.
+    env_file: .env.example

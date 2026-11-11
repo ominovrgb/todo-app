@@ -17,6 +17,7 @@ node_modules/
 .pnp.js
 
 # Testing and builds
+.pytest_cache/
 coverage/
 build/
 
@@ -28,3 +29,6 @@ yarn-error.log*
 
 # System files
 .DS_Store
+
+# Local database migration backups (retain until separately approved for deletion)
+.docker-backups/
